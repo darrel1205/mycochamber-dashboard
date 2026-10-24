@@ -4,43 +4,71 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MycoChamber Firebase Test</title>
+  <title>MycoChamber Firestore Test</title>
 </head>
 <body>
-  <h2>MycoChamber Firebase Connection Test</h2>
+  <h2>MycoChamber Firestore Test</h2>
   <p id="status">Connecting to Firebase...</p>
+  <pre id="readings">Waiting for Firestore data...</pre>
 
   <script type="module">
     import { initializeApp } from
       "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 
-    import { getAuth, signInAnonymously, onAuthStateChanged }
-      from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+    import {
+      getAuth,
+      signInAnonymously
+    } from
+      "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+    import {
+      getFirestore,
+      doc,
+      getDoc
+    } from
+      "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
     import { firebaseConfig } from "./firebase.js";
 
     const status = document.getElementById("status");
+    const readings = document.getElementById("readings");
 
-    try {
-      const app = initializeApp(firebaseConfig);
-      const auth = getAuth(app);
+    async function testFirestore() {
+      try {
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-      await signInAnonymously(auth);
+        await signInAnonymously(auth);
 
-      onAuthStateChanged(auth, (user) => {
-        if (user) {
+        status.textContent = "Signed in. Reading Firestore...";
+
+        const documentRef = doc(db, "live", "current");
+        const snapshot = await getDoc(documentRef);
+
+        if (snapshot.exists()) {
           status.textContent =
-            "SUCCESS: Firebase connected and anonymous sign-in works.";
+            "SUCCESS: Firestore document read successfully.";
+
+          readings.textContent =
+            JSON.stringify(snapshot.data(), null, 2);
         } else {
           status.textContent =
-            "Connected, but no authenticated user is available.";
+            "Connected, but live/current does not exist.";
+
+          readings.textContent =
+            "Check Firestore Database > Data.";
         }
-      });
-    } catch (error) {
-      console.error("Firebase test error:", error);
-      status.textContent =
-        "FAILED: " + error.code + " - " + error.message;
+      } catch (error) {
+        console.error("Firestore test error:", error);
+        status.textContent =
+          "FAILED: " + error.code + " - " + error.message;
+        readings.textContent =
+          "Open F12 > Console for details.";
+      }
     }
+
+    testFirestore();
   </script>
 </body>
 </html>
