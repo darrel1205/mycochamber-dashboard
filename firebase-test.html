@@ -1,0 +1,46 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MycoChamber Firebase Test</title>
+</head>
+<body>
+  <h2>MycoChamber Firebase Connection Test</h2>
+  <p id="status">Connecting to Firebase...</p>
+
+  <script type="module">
+    import { initializeApp } from
+      "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+
+    import { getAuth, signInAnonymously, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+    import { firebaseConfig } from "./firebase.js";
+
+    const status = document.getElementById("status");
+
+    try {
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+
+      await signInAnonymously(auth);
+
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          status.textContent =
+            "SUCCESS: Firebase connected and anonymous sign-in works.";
+        } else {
+          status.textContent =
+            "Connected, but no authenticated user is available.";
+        }
+      });
+    } catch (error) {
+      console.error("Firebase test error:", error);
+      status.textContent =
+        "FAILED: " + error.code + " - " + error.message;
+    }
+  </script>
+</body>
+</html>
