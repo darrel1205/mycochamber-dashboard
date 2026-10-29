@@ -148,11 +148,11 @@ td.t{color:var(--green)}td.h{color:var(--blue)}
         <div class="history-description" id="historyDesc">Loading…</div>
       </div>
       <div class="history-actions">
-        <a class="btn" href="/history.csv" download>
+        <button class="btn" type="button" onclick="exportHistoryCSV()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>
           CSV
-        </a>
-        <button class="btn danger" onclick="clearHistory()">Clear</button>
+        </button>
+        <button class="btn danger" type="button" disabled title="Cloud history is read-only from this dashboard">Clear</button>
       </div>
     </div>
 
@@ -440,21 +440,38 @@ async function manualRefresh(){
 }
 
 /* ---------- history ---------- */
-async function loadHistory(){
-  try{
-    const r = await fetch("/history?t=" + Date.now(), {cache:"no-store"});
-    if(!r.ok) throw new Error("history");
-    const d = await r.json();
-    histMeta = {intervalMin:d.intervalMin, samples:d.samples, synced:d.synced};
-    HIST = d.records.map(a => ({
-      time: a[0] * 1000,
-      t: [a[1],a[3],a[5],a[7]].map(v => v == null ? null : v / 10),
-      h: [a[2],a[4],a[6],a[8]].map(v => v == null ? null : v / 10)
-    }));
-    renderHistory();
-  }catch(e){
-    console.error(e);
-  }
+function loadHistoryFromCloud(documents){
+  HIST = documents.map(snap => {
+    const d = snap.data();
+    // ESP32 history documents store epoch/timestamp as Unix seconds and readings as doubles.
+    const seconds = Number(d.epoch ?? d.timestamp ?? 0);
+    return {
+      id: snap.id,
+      time: seconds * 1000,
+      t: [1,2,3,4].map(n => Number.isFinite(Number(d["temperature" + n])) ? Number(d["temperature" + n]) : null),
+      h: [1,2,3,4].map(n => Number.isFinite(Number(d["humidity" + n])) ? Number(d["humidity" + n]) : null)
+    };
+  }).filter(r => Number.isFinite(r.time) && r.time > 0)
+    .sort((a,b) => a.time - b.time);
+  histMeta = {intervalMin:5, samples:4, synced:true};
+  renderHistory();
+}
+
+function exportHistoryCSV(){
+  const rows = HIST.slice().sort((a,b) => a.time - b.time);
+  if(!rows.length){ showToast("No cloud history to export"); return; }
+  const csv = ["Timestamp (PHT),Chamber,Temperature (C),Humidity (%RH)"];
+  rows.forEach(r => {
+    for(let i=0;i<4;i++){
+      const date = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Manila", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false}).format(r.time);
+      csv.push([`"${date}"`, CH[i], r.t[i] == null ? "" : r.t[i].toFixed(1), r.h[i] == null ? "" : r.h[i].toFixed(1)].join(","));
+    }
+  });
+  const blob = new Blob([csv.join("\r\n")], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = "mycochamber-cloud-history.csv"; a.click();
+  URL.revokeObjectURL(url);
+  showToast("Cloud history exported");
 }
 
 function selectChamber(i){
@@ -541,11 +558,9 @@ function drawChart(rows, ch){
 }
 
 function renderHistory(){
-  const mins = [];
-  for(let k = 0; k < histMeta.samples; k++) mins.push(":" + String(k * histMeta.intervalMin).padStart(2, "0"));
-  $("historyDesc").textContent =
-    "Logged every hour at " + mins.join(", ") + " (" + histMeta.samples + " readings, " +
-    histMeta.intervalMin + " min apart) · Temperature in °C · Humidity in %RH";
+  if (!$("historyDesc").textContent.startsWith("Cloud history")) {
+    $("historyDesc").textContent = "Cloud history · Temperature in °C · Humidity in %RH";
+  }
 
   const cutoff = histRangeH ? Date.now() - histRangeH * 3600000 : 0;
   const rows = HIST.filter(r => r.time >= cutoff);
@@ -579,11 +594,10 @@ updatePhilippineTime();
 setInterval(updateUpdatedLabel, 1000);
 setInterval(updatePhilippineTime, 1000);
 
-// GitHub Pages uses Firebase for live readings. Local ESP32 history and
-// command endpoints are intentionally not called from the public dashboard.
-$("historyDesc").textContent = "Cloud history is not connected yet. Local history is available on the ESP32 network.";
-$("chart").innerHTML = '<div class="chart-empty">Cloud history will be added in a later step.</div>';
-$("historyRows").innerHTML = '<tr><td colspan="3" style="color:var(--text-faint);text-align:center;padding:22px">Cloud history is not connected yet.</td></tr>';
+// GitHub Pages reads history from Firestore, not from the ESP32's local network.
+$("historyDesc").textContent = "Connecting to cloud history…";
+$("chart").innerHTML = '<div class="chart-empty">Loading cloud history…</div>';
+$("historyRows").innerHTML = '<tr><td colspan="3" style="color:var(--text-faint);text-align:center;padding:22px">Loading cloud history…</td></tr>';
 $("summary").textContent = "";
 $("syncNotice").style.display = "none";
 
@@ -603,7 +617,7 @@ document.querySelectorAll(".mode-buttons button").forEach(b => {
 import { firebaseConfig } from "./firebase.js";
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
-import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import { getFirestore, doc, collection, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -662,6 +676,24 @@ async function startFirebaseDashboard() {
     }, error => {
       console.error("Firestore live-data listener failed:", error);
       statusEl.textContent = "Firebase read failed · check console and Firestore rules";
+    });
+
+    // Subscribe to the newest 672 records (up to 7 days at 5-minute intervals).
+    const historyQuery = query(collection(db, "history"), orderBy("timestamp", "desc"), limit(672));
+    onSnapshot(historyQuery, snapshot => {
+      loadHistoryFromCloud(snapshot.docs);
+      if (!snapshot.empty) {
+        $("historyDesc").textContent = "Cloud history · up to 7 days · Temperature in °C · Humidity in %RH";
+      } else {
+        $("historyDesc").textContent = "No cloud history records yet.";
+        $("chart").innerHTML = '<div class="chart-empty">No cloud history records yet.</div>';
+        $("historyRows").innerHTML = '<tr><td colspan="3" style="color:var(--text-faint);text-align:center;padding:22px">No cloud history records yet.</td></tr>';
+        $("summary").textContent = "";
+      }
+    }, error => {
+      console.error("Firestore history listener failed:", error);
+      $("historyDesc").textContent = "Cloud history could not be loaded. Check Firestore rules and document timestamps.";
+      $("chart").innerHTML = '<div class="chart-empty">Unable to load cloud history. Check the browser console.</div>';
     });
   } catch (error) {
     console.error("Firebase sign-in failed:", error);
