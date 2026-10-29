@@ -311,51 +311,11 @@ function showToast(msg){
   window.toastTimer = setTimeout(()=>t.classList.remove("show"), 1500);
 }
 
-/* ---------- commands ---------- */
-async function hit(url){
-  const r = await fetch(url + "?t=" + Date.now(), {cache:"no-store"});
-  if(!r.ok) throw new Error("Command failed: " + url);
-  return r;
-}
-
-function updateMode(mode){
-  const m = String(mode || "").toUpperCase();
-  $("autoButton").classList.toggle("active", m === "AUTO");
-  $("manualButton").classList.toggle("active", m === "MANUAL");
-}
-
-async function setMode(mode){
-  try{
-    await hit(mode === "auto" ? "/auto" : "/manual");
-    updateMode(mode === "auto" ? "AUTO" : "MANUAL");
-    showToast(mode === "auto" ? "AUTO mode" : "MANUAL mode");
-    await refreshData();
-  }catch(e){
-    console.error(e);
-    showToast("Mode command failed");
-  }
-}
-
-async function toggleDevice(kind, n, on, label){
-  showToast(label + " " + n + (on ? " ON" : " OFF"));
-  try{
-    await hit("/" + kind + n + (on ? "on" : "off"));
-  }catch(e){
-    console.error(e);
-    showToast(label + " " + n + " command failed");
-  }
-  await refreshData();
-}
-const toggleFan    = (n,on) => toggleDevice("fan", n, on, "Fan");
-const toggleMister = (n,on) => toggleDevice("mister", n, on, "Mister");
-
-async function toggleLed(on){
-  $("ledStatus").textContent = (on ? "On" : "Off") + " · GPIO 32";
-  showToast("LED " + (on ? "ON" : "OFF"));
-  try{ await hit(on ? "/ledon" : "/ledoff"); }
-  catch(e){ console.error(e); showToast("LED command failed"); }
-  await refreshData();
-}
+/* ---------- remote commands ----------
+   The public GitHub Pages dashboard must use Firestore commands.
+   Do not call local ESP32 URLs such as /fan1on, /mister1on, or /ledon.
+   The Firebase module below defines window.setMode/toggleFan/toggleMister/toggleLed.
+*/
 
 /* ---------- formatting ---------- */
 function formatUptimeMinutes(v){
@@ -628,7 +588,7 @@ async function sendRemoteCommand(patch, successMessage) {
     showToast(successMessage || "Remote command sent");
   } catch (error) {
     console.error("Remote command failed:", error);
-    showToast("Command failed: " + (error.code || "check Firebase rules"));
+    showToast("Command failed: " + (error.code || error.message || "check Firebase rules"));
   } finally {
     commandBusy = false;
     ["ledToggle", "autoButton", "manualButton"].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
