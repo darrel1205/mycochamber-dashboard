@@ -575,11 +575,100 @@ function renderHistory(){
 }
 
 /* ---------- start ---------- */
-refreshData();
 updatePhilippineTime();
-setInterval(refreshData, 1000);
 setInterval(updateUpdatedLabel, 1000);
 setInterval(updatePhilippineTime, 1000);
+
+// GitHub Pages uses Firebase for live readings. Local ESP32 history and
+// command endpoints are intentionally not called from the public dashboard.
+$("historyDesc").textContent = "Cloud history is not connected yet. Local history is available on the ESP32 network.";
+$("chart").innerHTML = '<div class="chart-empty">Cloud history will be added in a later step.</div>';
+$("historyRows").innerHTML = '<tr><td colspan="3" style="color:var(--text-faint);text-align:center;padding:22px">Cloud history is not connected yet.</td></tr>';
+$("summary").textContent = "";
+$("syncNotice").style.display = "none";
+
+// Do not show local-network controls as if they can control the chamber remotely.
+["ledToggle","autoButton","manualButton"].forEach(id => { const el = $(id); if (el) el.disabled = true; });
+for (let n = 1; n <= 4; n++) {
+  $("fan" + n + "Toggle").disabled = true;
+  $("mister" + n + "Toggle").disabled = true;
+}
+$("ledStatus").textContent = "Read-only · remote control not connected";
+document.querySelectorAll(".mode-buttons button").forEach(b => {
+  b.title = "Remote control will be connected in a later step";
+});
+</script>
+
+<script type="module">
+import { firebaseConfig } from "./firebase.js";
+import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const statusEl = document.getElementById("subtitleText");
+const fanTempDefaults = [30, 35, 35, 30];
+const misterHumDefaults = [75, 75, 95, 95];
+
+function updateFromFirestore(d) {
+  const epoch = Number(d.updatedAtEpoch || 0);
+  const ageSeconds = epoch > 0 ? Math.max(0, Date.now() / 1000 - epoch) : Infinity;
+  const online = d.status === "online" && ageSeconds < 90;
+
+  for (let i = 0; i < 4; i++) {
+    const n = i + 1;
+    const c = ["A", "B", "C", "D"][i];
+    const sensorOK = d["sht31_" + n + "_ok"] === true;
+    document.getElementById("pill" + c).className = "pill " + (online && sensorOK ? "online" : "offline");
+    document.getElementById("pillText" + c).textContent = !online ? "Offline" : (sensorOK ? "Online" : "Sensor error");
+    document.getElementById("card" + c).classList.toggle("online", online && sensorOK);
+    document.getElementById("temp" + n).textContent = sensorOK && Number.isFinite(Number(d["temperature" + n])) ? Number(d["temperature" + n]).toFixed(1) + "°C" : "N/A";
+    document.getElementById("hum" + n).textContent = sensorOK && Number.isFinite(Number(d["humidity" + n])) ? Number(d["humidity" + n]).toFixed(1) + "%" : "N/A";
+    document.getElementById("fan" + n + "Toggle").checked = d["fan" + n] === true;
+    document.getElementById("mister" + n + "Toggle").checked = d["mister" + n] === true;
+    document.getElementById("fanTarget" + n).textContent = "Fan on ≥ " + (Array.isArray(d.fanTemp) ? d.fanTemp[i] : fanTempDefaults[i]) + "°C";
+    document.getElementById("misterTarget" + n).textContent = "Mister on < " + (Array.isArray(d.misterHum) ? d.misterHum[i] : misterHumDefaults[i]) + "%";
+  }
+
+  const ledOn = d.ledLight === true || d.led === true;
+  document.getElementById("ledToggle").checked = ledOn;
+  document.getElementById("ledStatus").textContent = (ledOn ? "On" : "Off") + " · read-only";
+  const mode = String(d.mode || "MANUAL").toUpperCase();
+  document.getElementById("autoButton").classList.toggle("active", mode === "AUTO");
+  document.getElementById("manualButton").classList.toggle("active", mode === "MANUAL");
+  if (d.uptimeMinutes !== undefined) {
+    document.getElementById("espUptime").textContent = formatUptimeMinutes(d.uptimeMinutes);
+  }
+  if (online) {
+    lastUpdateTime = Date.now() - ageSeconds * 1000;
+    statusEl.textContent = "Automated mushroom cultivation dashboard · Firebase live";
+  } else {
+    statusEl.textContent = "Automated mushroom cultivation dashboard · ESP32 data is stale/offline";
+  }
+}
+
+async function startFirebaseDashboard() {
+  try {
+    await signInAnonymously(auth);
+    const liveRef = doc(db, "live", "current");
+    onSnapshot(liveRef, snapshot => {
+      if (!snapshot.exists()) {
+        statusEl.textContent = "Firebase connected · waiting for live/current";
+        return;
+      }
+      updateFromFirestore(snapshot.data());
+    }, error => {
+      console.error("Firestore live-data listener failed:", error);
+      statusEl.textContent = "Firebase read failed · check console and Firestore rules";
+    });
+  } catch (error) {
+    console.error("Firebase sign-in failed:", error);
+    statusEl.textContent = "Firebase sign-in failed · check Authentication settings";
+  }
+}
+startFirebaseDashboard();
 </script>
 </body>
 </html>
