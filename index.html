@@ -601,23 +601,13 @@ $("historyRows").innerHTML = '<tr><td colspan="3" style="color:var(--text-faint)
 $("summary").textContent = "";
 $("syncNotice").style.display = "none";
 
-// Do not show local-network controls as if they can control the chamber remotely.
-["ledToggle","autoButton","manualButton"].forEach(id => { const el = $(id); if (el) el.disabled = true; });
-for (let n = 1; n <= 4; n++) {
-  $("fan" + n + "Toggle").disabled = true;
-  $("mister" + n + "Toggle").disabled = true;
-}
-$("ledStatus").textContent = "Read-only · remote control not connected";
-document.querySelectorAll(".mode-buttons button").forEach(b => {
-  b.title = "Remote control will be connected in a later step";
-});
 </script>
 
 <script type="module">
 import { firebaseConfig } from "./firebase.js";
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
-import { getFirestore, doc, collection, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import { getFirestore, doc, collection, query, orderBy, limit, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -648,7 +638,7 @@ function updateFromFirestore(d) {
 
   const ledOn = d.ledLight === true || d.led === true;
   document.getElementById("ledToggle").checked = ledOn;
-  document.getElementById("ledStatus").textContent = (ledOn ? "On" : "Off") + " · read-only";
+  document.getElementById("ledStatus").textContent = (ledOn ? "On" : "Off") + " · GPIO 32";
   const mode = String(d.mode || "MANUAL").toUpperCase();
   document.getElementById("autoButton").classList.toggle("active", mode === "AUTO");
   document.getElementById("manualButton").classList.toggle("active", mode === "MANUAL");
@@ -672,7 +662,8 @@ async function startFirebaseDashboard() {
         statusEl.textContent = "Firebase connected · waiting for live/current";
         return;
       }
-      updateFromFirestore(snapshot.data());
+      latestLive = snapshot.data();
+      updateFromFirestore(latestLive);
     }, error => {
       console.error("Firestore live-data listener failed:", error);
       statusEl.textContent = "Firebase read failed · check console and Firestore rules";
@@ -700,6 +691,48 @@ async function startFirebaseDashboard() {
     statusEl.textContent = "Firebase sign-in failed · check Authentication settings";
   }
 }
+
+/* ---------- remote commands (Firestore -> ESP32) ---------- */
+let latestLive = {};
+
+async function sendCommand(changes) {
+  const L = latestLive || {};
+  const cmd = {
+    mode: String(L.mode || "MANUAL").toUpperCase(),
+    ledLight: L.ledLight === true
+  };
+  for (let n = 1; n <= 4; n++) {
+    cmd["fan" + n] = L["fan" + n] === true;
+    cmd["mister" + n] = L["mister" + n] === true;
+  }
+  Object.assign(cmd, changes);
+  cmd.commandId = Date.now();
+  await setDoc(doc(db, "commands", "current"), cmd);
+}
+
+// The existing buttons call hit("/fan1on"), hit("/auto"), hit("/ledoff") ...
+// Redirect those same calls to Firestore so the rest of the page stays unchanged.
+window.hit = async function (url) {
+  const path = String(url).split("?")[0];
+  let m;
+  if (path === "/auto")   return sendCommand({ mode: "AUTO" });
+  if (path === "/manual") return sendCommand({ mode: "MANUAL" });
+  if (path === "/ledon")  return sendCommand({ ledLight: true });
+  if (path === "/ledoff") return sendCommand({ ledLight: false });
+  if ((m = path.match(/^\/(fan|mister)([1-4])(on|off)$/))) {
+    // Turning a single device on/off puts the chamber in MANUAL, same as the ESP32 web page.
+    return sendCommand({ mode: "MANUAL", [m[1] + m[2]]: m[3] === "on" });
+  }
+  throw new Error("Not available over the cloud: " + path);
+};
+
+// GitHub Pages cannot reach the ESP32's local /data, so skip those polls.
+window.refreshData = async function () {};
+
+window.clearHistory = async function () {
+  showToast("Clearing history is only available on the ESP32's local page");
+};
+
 startFirebaseDashboard();
 </script>
 </body>
