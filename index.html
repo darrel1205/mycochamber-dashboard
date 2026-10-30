@@ -607,13 +607,11 @@ $("syncNotice").style.display = "none";
 import { firebaseConfig } from "./firebase.js";
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
-import { getFirestore, doc, collection, query, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
+import { getFirestore, doc, collection, query, orderBy, limit, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);      // Firestore: history
-const rtdb = getDatabase(app);     // Realtime Database: live data + commands
+const db = getFirestore(app);
 const statusEl = document.getElementById("subtitleText");
 const fanTempDefaults = [30, 35, 35, 30];
 const misterHumDefaults = [75, 75, 95, 95];
@@ -621,7 +619,7 @@ const misterHumDefaults = [75, 75, 95, 95];
 function updateFromFirestore(d) {
   const epoch = Number(d.updatedAtEpoch || 0);
   const ageSeconds = epoch > 0 ? Math.max(0, Date.now() / 1000 - epoch) : Infinity;
-  const online = d.status === "online" && ageSeconds < 20;
+  const online = d.status === "online" && ageSeconds < 90;
 
   for (let i = 0; i < 4; i++) {
     const n = i + 1;
@@ -658,24 +656,17 @@ function updateFromFirestore(d) {
 async function startFirebaseDashboard() {
   try {
     await signInAnonymously(auth);
-    onValue(ref(rtdb, "live"), snapshot => {
+    const liveRef = doc(db, "live", "current");
+    onSnapshot(liveRef, snapshot => {
       if (!snapshot.exists()) {
-        statusEl.textContent = "Firebase connected · waiting for /live (is the ESP32 online?)";
+        statusEl.textContent = "Firebase connected · waiting for live/current";
         return;
       }
-      latestLive = snapshot.val();
-      let view = latestLive;
-      if (pendingView) {
-        const confirmed = Object.keys(pendingView).every(k =>
-          k === "mode" ? String(latestLive.mode).toUpperCase() === pendingView.mode
-                       : latestLive[k] === pendingView[k]);
-        if (confirmed || Date.now() > holdUntil) pendingView = null;
-        else view = { ...latestLive, ...pendingView };
-      }
-      updateFromFirestore(view);
+      latestLive = snapshot.data();
+      updateFromFirestore(latestLive);
     }, error => {
-      console.error("Realtime Database live listener failed:", error);
-      statusEl.textContent = "Firebase read failed · check console and Realtime Database rules";
+      console.error("Firestore live-data listener failed:", error);
+      statusEl.textContent = "Firebase read failed · check console and Firestore rules";
     });
 
     // Subscribe to the newest 672 records (up to 7 days at 5-minute intervals).
@@ -701,10 +692,8 @@ async function startFirebaseDashboard() {
   }
 }
 
-/* ---------- remote commands (Realtime Database /commands -> ESP32) ---------- */
+/* ---------- remote commands (Firestore -> ESP32) ---------- */
 let latestLive = {};
-let pendingView = null;
-let holdUntil = 0;
 
 async function sendCommand(changes) {
   const L = latestLive || {};
@@ -717,23 +706,12 @@ async function sendCommand(changes) {
     cmd["mister" + n] = L["mister" + n] === true;
   }
   Object.assign(cmd, changes);
-
-  // Show the change instantly; keep it until the ESP32 confirms (max 8 s).
-  pendingView = { mode: cmd.mode, ledLight: cmd.ledLight };
-  if (cmd.mode !== "AUTO") {
-    for (let n = 1; n <= 4; n++) {
-      pendingView["fan" + n] = cmd["fan" + n];
-      pendingView["mister" + n] = cmd["mister" + n];
-    }
-  }
-  holdUntil = Date.now() + 8000;
-  updateFromFirestore({ ...latestLive, ...pendingView });
-
-  await update(ref(rtdb, "commands"), cmd);
+  cmd.commandId = Date.now();
+  await setDoc(doc(db, "commands", "current"), cmd);
 }
 
 // The existing buttons call hit("/fan1on"), hit("/auto"), hit("/ledoff") ...
-// Redirect those same calls to Realtime Database so the rest of the page stays unchanged.
+// Redirect those same calls to Firestore so the rest of the page stays unchanged.
 window.hit = async function (url) {
   const path = String(url).split("?")[0];
   let m;

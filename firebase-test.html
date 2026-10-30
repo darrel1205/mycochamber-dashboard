@@ -1,49 +1,74 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MycoChamber Firebase Test</title>
+  <title>MycoChamber Firestore Test</title>
 </head>
 <body>
-  <h2>MycoChamber Firebase Test</h2>
+  <h2>MycoChamber Firestore Test</h2>
   <p id="status">Connecting to Firebase...</p>
-  <h3>Realtime Database: /live</h3>
-  <pre id="rtdb">Waiting...</pre>
-  <h3>Firestore: newest history record</h3>
-  <pre id="fs">Waiting...</pre>
+  <pre id="readings">Waiting for Firestore data...</pre>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
-    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
-    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
-    import { getFirestore, collection, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+    import { initializeApp } from
+      "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+
+    import {
+      getAuth,
+      signInAnonymously
+    } from
+      "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+    import {
+      getFirestore,
+      doc,
+      getDoc
+    } from
+      "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+
     import { firebaseConfig } from "./firebase.js";
 
     const status = document.getElementById("status");
-    const rtdbOut = document.getElementById("rtdb");
-    const fsOut = document.getElementById("fs");
+    const readings = document.getElementById("readings");
 
-    try {
-      const app = initializeApp(firebaseConfig);
-      await signInAnonymously(getAuth(app));
-      status.textContent = "Signed in.";
+    async function testFirestore() {
+      try {
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-      onValue(ref(getDatabase(app), "live"), (snap) => {
-        rtdbOut.textContent = snap.exists()
-          ? JSON.stringify(snap.val(), null, 2)
-          : "Connected, but /live has no data yet (is the ESP32 online?).";
-      }, (err) => {
-        rtdbOut.textContent = "FAILED: " + err.code + " - " + err.message;
-      });
+        await signInAnonymously(auth);
 
-      const q = query(collection(getFirestore(app), "history"), orderBy("timestamp", "desc"), limit(1));
-      const docs = await getDocs(q);
-      fsOut.textContent = docs.empty ? "No history yet." : JSON.stringify(docs.docs[0].data(), null, 2);
-    } catch (error) {
-      console.error(error);
-      status.textContent = "FAILED: " + error.code + " - " + error.message;
+        status.textContent = "Signed in. Reading Firestore...";
+
+        const documentRef = doc(db, "live", "current");
+        const snapshot = await getDoc(documentRef);
+
+        if (snapshot.exists()) {
+          status.textContent =
+            "SUCCESS: Firestore document read successfully.";
+
+          readings.textContent =
+            JSON.stringify(snapshot.data(), null, 2);
+        } else {
+          status.textContent =
+            "Connected, but live/current does not exist.";
+
+          readings.textContent =
+            "Check Firestore Database > Data.";
+        }
+      } catch (error) {
+        console.error("Firestore test error:", error);
+        status.textContent =
+          "FAILED: " + error.code + " - " + error.message;
+        readings.textContent =
+          "Open F12 > Console for details.";
+      }
     }
+
+    testFirestore();
   </script>
 </body>
 </html>
