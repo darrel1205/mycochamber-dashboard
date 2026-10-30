@@ -1,4 +1,3 @@
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import {
   getAuth,
@@ -7,11 +6,16 @@ import {
 import {
   getFirestore
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import {
+  getDatabase
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
 
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 export const firebaseConfig = {
   apiKey: "AIzaSyBJoDCHcx7tcQSqtMn5leOiiDo6xAHplSc",
   authDomain: "mycochamber.firebaseapp.com",
+  // Must match the URL shown in Firebase console > Realtime Database > Data.
+  databaseURL: "https://mycochamber-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "mycochamber",
   storageBucket: "mycochamber.firebasestorage.app",
   messagingSenderId: "21661693086",
@@ -22,7 +26,8 @@ export const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = getFirestore(app);      // Firestore: history
+export const rtdb = getDatabase(app);     // Realtime Database: live + commands
 
 export const firebaseReady = signInAnonymously(auth)
   .then((credential) => {
