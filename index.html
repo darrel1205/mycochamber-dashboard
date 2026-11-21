@@ -83,8 +83,6 @@ body{min-height:100vh;background:var(--bg);color:var(--text);padding:16px 16px 7
 .uptime-label{font-size:12px;color:var(--text-dim)}
 .uptime-live{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--green);font-weight:700}
 .uptime-live .dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
-.uptime-live.offline{color:var(--text-faint)}
-.uptime-live.offline .dot{background:var(--text-faint)}
 .uptime-value{font-size:20px;font-weight:700;letter-spacing:.3px}
 .uptime-description{font-size:10px;color:var(--text-faint);margin-top:3px}
 
@@ -167,6 +165,7 @@ td.t{color:var(--green)}td.h{color:var(--blue)}
       <button class="tab" data-ch="1" onclick="selectChamber(1)">Chamber B</button>
       <button class="tab" data-ch="2" onclick="selectChamber(2)">Chamber C</button>
       <button class="tab" data-ch="3" onclick="selectChamber(3)">Chamber D</button>
+      <button class="tab" data-ch="4" onclick="selectChamber(4)">Uncontrolled</button>
       <select id="rangeSel" onchange="selectRange(this.value)">
         <option value="24">Last 24 hours</option>
         <option value="72">Last 3 days</option>
@@ -229,7 +228,7 @@ td.t{color:var(--green)}td.h{color:var(--blue)}
   <div class="uptime-box">
     <div class="uptime-head">
       <span class="uptime-label">ESP32 Uptime</span>
-      <span class="uptime-live offline" id="runState"><span class="dot"></span><span id="runStateText">OFFLINE</span></span>
+      <span class="uptime-live"><span class="dot"></span>RUNNING</span>
     </div>
     <div class="uptime-value" id="espUptime">0 min</div>
     <div class="uptime-description">Total controller operating time · updated every minute</div>
@@ -291,7 +290,31 @@ function cardHTML(i){
     </div>
   </div>`;
 }
-document.getElementById("chambers").innerHTML = CH.map((c,i)=>cardHTML(i)).join("");
+function uncontrolledCardHTML(){
+  return `
+  <div class="card" id="cardU" style="grid-column:1/-1">
+    <div class="card-head">
+      <div>
+        <div class="chamber-name">Uncontrolled</div>
+        <div class="chamber-sub">Outside the chambers · live readings only</div>
+      </div>
+      <div class="pill offline" id="pillU"><span class="dot"></span><span id="pillTextU">Offline</span></div>
+    </div>
+    <div class="readings">
+      <div>
+        <div class="reading-label">${ICON.temp}Temperature</div>
+        <div class="reading-value" id="temp5">--°C</div>
+        <div class="reading-target">Ambient air temperature</div>
+      </div>
+      <div>
+        <div class="reading-label">${ICON.hum}Humidity</div>
+        <div class="reading-value" id="hum5">--%</div>
+        <div class="reading-target">Ambient relative humidity</div>
+      </div>
+    </div>
+  </div>`;
+}
+document.getElementById("chambers").innerHTML = CH.map((c,i)=>cardHTML(i)).join("") + uncontrolledCardHTML();
 
 const $ = id => document.getElementById(id);
 
@@ -385,10 +408,7 @@ function updatePhilippineTime(){
 
 function updateUpdatedLabel(){
   const s = Math.round((Date.now() - lastUpdateTime) / 1000);
-  const ago = s < 3 ? "just now" : s < 60 ? s + "s ago" : s < 3600 ? Math.floor(s / 60) + " min ago" : Math.floor(s / 3600) + " h ago";
-  $("subtitleText").textContent = window.espOnline === false
-    ? "Automated mushroom cultivation dashboard · ESP32 offline · last data " + ago
-    : "Automated mushroom cultivation dashboard · Updated " + ago;
+  $("subtitleText").textContent = "Automated mushroom cultivation dashboard · Updated " + (s < 3 ? "just now" : s + "s ago");
 }
 
 /* ---------- live data ---------- */
@@ -453,8 +473,8 @@ function loadHistoryFromCloud(documents){
     return {
       id: snap.id,
       time: seconds * 1000,
-      t: [1,2,3,4].map(n => Number.isFinite(Number(d["temperature" + n])) ? Number(d["temperature" + n]) : null),
-      h: [1,2,3,4].map(n => Number.isFinite(Number(d["humidity" + n])) ? Number(d["humidity" + n]) : null)
+      t: [1,2,3,4,5].map(n => typeof d["temperature" + n] === "number" && Number.isFinite(d["temperature" + n]) ? d["temperature" + n] : null),
+      h: [1,2,3,4,5].map(n => typeof d["humidity" + n] === "number" && Number.isFinite(d["humidity" + n]) ? d["humidity" + n] : null)
     };
   }).filter(r => Number.isFinite(r.time) && r.time > 0)
     .sort((a,b) => a.time - b.time);
@@ -467,9 +487,10 @@ function exportHistoryCSV(){
   if(!rows.length){ showToast("No cloud history to export"); return; }
   const csv = ["Timestamp (PHT),Chamber,Temperature (C),Humidity (%RH)"];
   rows.forEach(r => {
-    for(let i=0;i<4;i++){
+    for(let i=0;i<5;i++){
+      if(i === 4 && r.t[i] == null && r.h[i] == null) continue;
       const date = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Manila", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false}).format(r.time);
-      csv.push([`"${date}"`, CH[i], r.t[i] == null ? "" : r.t[i].toFixed(1), r.h[i] == null ? "" : r.h[i].toFixed(1)].join(","));
+      csv.push([`"${date}"`, (i === 4 ? "Uncontrolled" : CH[i]), r.t[i] == null ? "" : r.t[i].toFixed(1), r.h[i] == null ? "" : r.h[i].toFixed(1)].join(","));
     }
   });
   const blob = new Blob([csv.join("\r\n")], {type:"text/csv;charset=utf-8;"});
@@ -643,6 +664,15 @@ function updateFromFirestore(d) {
     document.getElementById("misterTarget" + n).textContent = "Mister on < " + (Array.isArray(d.misterHum) ? d.misterHum[i] : misterHumDefaults[i]) + "%";
   }
 
+  const uTemp = typeof d.temperature5 === "number" && Number.isFinite(d.temperature5);
+  const uHum  = typeof d.humidity5 === "number" && Number.isFinite(d.humidity5);
+  const uOK = uTemp && uHum && d.sht31_5_ok !== false;
+  document.getElementById("pillU").className = "pill " + (online && uOK ? "online" : "offline");
+  document.getElementById("pillTextU").textContent = !online ? "Offline" : (uOK ? "Online" : "No sensor data");
+  document.getElementById("cardU").classList.toggle("online", online && uOK);
+  document.getElementById("temp5").textContent = uTemp ? d.temperature5.toFixed(1) + "°C" : "N/A";
+  document.getElementById("hum5").textContent  = uHum  ? d.humidity5.toFixed(1) + "%" : "N/A";
+
   const ledOn = d.ledLight === true || d.led === true;
   document.getElementById("ledToggle").checked = ledOn;
   document.getElementById("ledStatus").textContent = (ledOn ? "On" : "Off") + " · GPIO 32";
@@ -658,7 +688,6 @@ function updateFromFirestore(d) {
   } else {
     statusEl.textContent = "Automated mushroom cultivation dashboard · ESP32 data is stale/offline";
   }
-  renderOnline();
 }
 
 async function startFirebaseDashboard() {
@@ -707,31 +736,6 @@ async function startFirebaseDashboard() {
   }
 }
 
-/* ---------- online / offline state (re-checked every second) ---------- */
-function isEspOnline() {
-  const d = latestLive || {};
-  const epoch = Number(d.updatedAtEpoch || 0);
-  const age = epoch > 0 ? Math.max(0, Date.now() / 1000 - epoch) : Infinity;
-  return d.status === "online" && age < 20;
-}
-
-function renderOnline() {
-  const d = latestLive || {};
-  const online = isEspOnline();
-  window.espOnline = online;
-
-  ["A", "B", "C", "D"].forEach((c, i) => {
-    const sensorOK = d["sht31_" + (i + 1) + "_ok"] === true;
-    document.getElementById("pill" + c).className = "pill " + (online && sensorOK ? "online" : "offline");
-    document.getElementById("pillText" + c).textContent = !online ? "Offline" : (sensorOK ? "Online" : "Sensor error");
-    document.getElementById("card" + c).classList.toggle("online", online && sensorOK);
-  });
-
-  document.getElementById("runState").classList.toggle("offline", !online);
-  document.getElementById("runStateText").textContent = online ? "RUNNING" : "OFFLINE";
-}
-setInterval(renderOnline, 1000);
-
 /* ---------- remote commands (Realtime Database /commands -> ESP32) ---------- */
 let latestLive = {};
 let pendingView = null;
@@ -748,7 +752,6 @@ async function sendCommand(changes) {
     cmd["mister" + n] = L["mister" + n] === true;
   }
   Object.assign(cmd, changes);
-  cmd.commandId = Date.now();
 
   // Show the change instantly; keep it until the ESP32 confirms (max 8 s).
   pendingView = { mode: cmd.mode, ledLight: cmd.ledLight };
